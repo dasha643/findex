@@ -1,14 +1,37 @@
-from src.indexer import tokenize
+import pytest
+from findex.indexer import tokenize
 
-def test_tokenize_basic():
-    text = "Hello world! Test 2026."
-    tokens = list(tokenize(text))
-    assert "hello" in tokens
-    assert "world" in tokens
-    assert "2026" in tokens
-
-def test_tokenize_apostrophe_and_hyphen():
-    text = "it's well-known test"
-    tokens = list(tokenize(text))
-    assert "it's" in tokens
-    assert "well-known" in tokens
+# Кожен рядок у цьому списку створює окремий тест автоматично!
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("Привіт світ!", ["привіт", "світ"]),
+        ("ПК-реверс, 2026 рік", ["пк-реверс", "2026", "рік"]),
+        ("м'язи, єнот, ґава, їжак", ["м'язи", "єнот", "ґава", "їжак"]),
+        ("Hello world! Test 2026.", ["hello", "world", "test", "2026"]),
+        ("it's well-known test", ["it's", "well-known", "test"]),
+        ("Тест 1", ["тест", "1"]),
+        ("Тест 2", ["тест", "2"]),
+        ("Тест 3", ["тест", "3"]),
+        ("Тест 4", ["тест", "4"]),
+        ("Тест 5", ["тест", "5"]),
+        ("Тест 6", ["тест", "6"]),
+        ("Тест 7", ["тест", "7"]),
+        ("Тест 8", ["тест", "8"]),
+        ("Тест 9", ["тест", "9"]),
+        ("Тест 10", ["тест", "10"]),
+        ("Python 3.14", ["python", "3", "14"]),
+        ("Data Science & AI", ["data", "science", "ai"]),
+        ("Пошуковий двигун findex", ["пошуковий", "двигун", "findex"]),
+        ("Юнікод та українські символи", ["юнікод", "та", "українські", "символи"]),
+        ("Апостроф: дзвінкий, м'який", ["апостроф", "дзвінкий", "м'який"]),
+        ("", []),
+        ("   ", []),
+        ("12345", ["12345"]),
+        ("---", []),
+        ("...abc...", ["abc"]),
+    ],
+)
+def test_tokenize_bulk(text: str, expected: list[str]) -> None:
+    """Масовий параметризований тест для токенізатора."""
+    assert list(tokenize(text)) == expected

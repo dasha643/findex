@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "findex"
+version = "0.4.0"
+description = "An inverted index and boolean search engine command-line utility"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "rich>=13.0.0",
+    "typer>=0.9.0",
+]
+
+[project.scripts]
+findex = "findex.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pyright>=1.1.0",
+    "ruff>=0.1.0",
+    "hypothesis>=6.0.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q"
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+
+[tool.pyright]
+include = ["src", "tests"]
+executionEnvironments = [
+    { root = "src" }
+]
+typeCheckingMode = "strict"
+reportMissingImports = true
+reportMissingTypeStubs = false

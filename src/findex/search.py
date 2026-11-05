@@ -1,10 +1,11 @@
-from dataclasses import dataclass
-import math
 import heapq
-import time
-from functools import wraps, lru_cache
-from typing import Set, List, Union
+import math
 import re
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+from functools import wraps
+from typing import Any, Protocol, TypeVar
 
 
 @dataclass(order=True)
@@ -14,46 +15,55 @@ class SearchResult:
     doc_id: int
 
 
+class Scorer(Protocol):
+    """Протокол для класів ранжування (TF-IDF, BM25)"""
+    def score(self, term: str, freq: int, doc_len: int, index: Any) -> float:
+        ...
+
+
 class TfIdf:
     """Реалізація метрики TF-IDF для ранжування"""
 
-    def score(self, term: str, freq: int, doc_len: int, index) -> float:
-        df = index.df(term)
+    def score(self, term: str, freq: int, doc_len: int, index: Any) -> float:
+        df: int = index.df(term)
         if df == 0:
             return 0.0
-        idf = math.log(index.num_docs / df)
-        return freq * idf
+        idf: float = math.log(index.num_docs / df)
+        return float(freq * idf)
 
 
 class BM25:
     """Реалізація алгоритму BM25 для ранжування"""
 
-    def __init__(self, k1: float = 1.5, b: float = 0.75):
-        self.k1 = k1
-        self.b = b
+    def __init__(self, k1: float = 1.5, b: float = 0.75) -> None:
+        self.k1: float = k1
+        self.b: float = b
 
-    def score(self, term: str, freq: int, doc_len: int, index) -> float:
-        df = index.df(term)
+    def score(self, term: str, freq: int, doc_len: int, index: Any) -> float:
+        df: int = index.df(term)
         if df == 0:
             return 0.0
 
-        idf = math.log((index.num_docs - df + 0.5) / (df + 0.5) + 1.0)
+        idf: float = math.log((index.num_docs - df + 0.5) / (df + 0.5) + 1.0)
 
-        avg_dl = index.avg_doc_length
+        avg_dl: float = index.avg_doc_length
         if avg_dl == 0:
             avg_dl = 1.0
 
-        numerator = freq * (self.k1 + 1)
-        denominator = freq + self.k1 * (1.0 - self.b + self.b * (doc_len / avg_dl))
+        numerator: float = freq * (self.k1 + 1.0)
+        denominator: float = freq + self.k1 * (1.0 - self.b + self.b * (doc_len / avg_dl))
 
-        return idf * (numerator / denominator)
+        return float(idf * (numerator / denominator))
 
 
-def timed(func):
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def timed(func: F) -> F:
     """Декоратор для вимірювання часу виконання функцій з functools.wraps"""
 
     @wraps(func)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
         start_time = time.perf_counter()
         result = func(*args, **kwargs)
         end_time = time.perf_counter()
@@ -61,7 +71,7 @@ def timed(func):
         print(f"[TIMED] Функція '{func.__name__}' виконалась за {duration_ms:.2f} мс")
         return result
 
-    return wrapper
+    return wrapper  # type: ignore[reportReturnType]
 
 
 def generate_snippet(text: str, term: str, window: int = 80) -> str:
@@ -86,15 +96,15 @@ def generate_snippet(text: str, term: str, window: int = 80) -> str:
 
 
 @timed
-def rank_documents(query_terms: List[str], index, scorer, top_k: int = 5) -> List[SearchResult]:
+def rank_documents(query_terms: list[str], index: Any, scorer: Scorer, top_k: int = 5) -> list[SearchResult]:
     """Ранжує документи за заданими термінами, використовуючи скрорер і heapq.nlargest"""
-    scores = {}
+    scores: dict[int, float] = {}
 
     for term in query_terms:
         if term in index:
             for posting in index[term]:
                 doc_meta = index._doc_metas.get(posting.doc_id)
-                doc_len = doc_meta.length if doc_meta else 100
+                doc_len = doc_meta.length if doc_meta and hasattr(doc_meta, "length") else 100
 
                 term_score = scorer.score(term, posting.freq, doc_len, index)
                 scores[posting.doc_id] = scores.get(posting.doc_id, 0.0) + term_score
@@ -103,73 +113,71 @@ def rank_documents(query_terms: List[str], index, scorer, top_k: int = 5) -> Lis
     return heapq.nlargest(top_k, results)
 
 
-
 class QueryNode:
     """Базовий клас для вузлів синтаксичного дерева запиту"""
 
-    def evaluate(self, index) -> Set[int]:
+    def evaluate(self, index: Any) -> set[int]:
         raise NotImplementedError
 
-    def __and__(self, other):
+    def __and__(self, other: "QueryNode") -> "AndNode":
         return AndNode(self, other)
 
-    def __or__(self, other):
+    def __or__(self, other: "QueryNode") -> "OrNode":
         return OrNode(self, other)
 
-    def __invert__(self):
+    def __invert__(self) -> "NotNode":
         return NotNode(self)
 
 
 class TermNode(QueryNode):
-    def __init__(self, term: str):
-        self.term = term
+    def __init__(self, term: str) -> None:
+        self.term: str = term
 
-    def evaluate(self, index) -> Set[int]:
+    def evaluate(self, index: Any) -> set[int]:
         postings = index.get(self.term, [])
         return {p.doc_id for p in postings}
 
 
 class AndNode(QueryNode):
-    def __init__(self, left: QueryNode, right: QueryNode):
-        self.left = left
-        self.right = right
+    def __init__(self, left: QueryNode, right: QueryNode) -> None:
+        self.left: QueryNode = left
+        self.right: QueryNode = right
 
-    def evaluate(self, index) -> Set[int]:
+    def evaluate(self, index: Any) -> set[int]:
         return self.left.evaluate(index) & self.right.evaluate(index)
 
 
 class OrNode(QueryNode):
-    def __init__(self, left: QueryNode, right: QueryNode):
-        self.left = left
-        self.right = right
+    def __init__(self, left: QueryNode, right: QueryNode) -> None:
+        self.left: QueryNode = left
+        self.right: QueryNode = right
 
-    def evaluate(self, index) -> Set[int]:
+    def evaluate(self, index: Any) -> set[int]:
         return self.left.evaluate(index) | self.right.evaluate(index)
 
 
 class NotNode(QueryNode):
-    def __init__(self, node: QueryNode):
-        self.node = node
+    def __init__(self, node: QueryNode) -> None:
+        self.node: QueryNode = node
 
-    def evaluate(self, index) -> Set[int]:
-        all_docs = set(index._doc_metas.keys())
+    def evaluate(self, index: Any) -> set[int]:
+        all_docs: set[int] = set(index._doc_metas.keys())
         return all_docs - self.node.evaluate(index)
-
 
 
 class QueryParser:
     """Простий лексер і парсер на основі рекурсивного спуску для булевих запитів."""
 
-    def __init__(self, tokens: List[str]):
-        self.tokens = tokens
-        self.pos = 0
+    def __init__(self, tokens: list[str]) -> None:
+        self.tokens: list[str] = tokens
+        self.pos: int = 0
 
-    def peek(self) -> Union[str, None]:
+    def peek(self) -> str | None:
         if self.pos < len(self.tokens):
             return self.tokens[self.pos]
         return None
 
-    def consume(self) -> Union[str, None]:
+    def consume(self) -> str | None:
         token = self.peek()
         self.pos += 1
         return token
@@ -215,6 +223,6 @@ class QueryParser:
 
 def parse_query(query_str: str) -> QueryNode:
     """Допоміжна функція для токенізації та парсингу рядка запиту."""
-    tokens = re.findall(r'\(|\)|AND|OR|NOT|[a-zA-Zа-яА-Я0-9_]+', query_str)
+    tokens = re.findall(r'\(|\)|AND|OR|NOT|[a-zA-Zа-яА-Яа-їґєії0-9_]+', query_str)
     parser = QueryParser(tokens)
     return parser.parse()

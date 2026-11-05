@@ -1,10 +1,12 @@
 import time
 import tracemalloc
 from pathlib import Path
-from src.indexer import collect_corpus_statistics
-from src.greedy import run_greedy_approach
 
-corpus_path = Path("data")
+from greedy import run_greedy_approach
+
+from findex.indexer import collect_corpus_statistics
+
+corpus_path = Path("../../data")
 
 tracemalloc.start()
 start_time = time.perf_counter()
