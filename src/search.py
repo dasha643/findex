@@ -1,71 +1,220 @@
-from typing import List, Set
-from .inverted import InvertedIndex
+from dataclasses import dataclass
+import math
+import heapq
+import time
+from functools import wraps, lru_cache
+from typing import Set, List, Union
+import re
 
 
-class BooleanSearch:
-    def __init__(self, index: InvertedIndex, engine: str = "merge"):
-        """engine: 'merge' (двовказівниковий merge по списках) або 'set' (через Python set)"""
-        self.index = index
-        self.engine = engine
+@dataclass(order=True)
+class SearchResult:
+    """Результат пошуку з підтримкою порівняння за релевантністю"""
+    score: float
+    doc_id: int
 
-    def search_and(self, terms: List[str]) -> Set[int]:
-        """виконання операції AND для списку термінів"""
-        if not terms:
-            return set()
 
-        if self.engine == "set":
-            result = None
-            for term in terms:
-                postings = self.index.index.get(term, [])
-                doc_ids = {p.doc_id for p in postings}
-                if result is None:
-                    result = doc_ids
-                else:
-                    result.intersection_update(doc_ids)
-                if not result:
-                    break
-            return result or set()
-        else:
-            postings_lists = [self.index.index.get(term, []) for term in terms]
-            if not all(postings_lists):
-                return set()
+class TfIdf:
+    """Реалізація метрики TF-IDF для ранжування"""
 
-            postings_lists.sort(key=len)
+    def score(self, term: str, freq: int, doc_len: int, index) -> float:
+        df = index.df(term)
+        if df == 0:
+            return 0.0
+        idf = math.log(index.num_docs / df)
+        return freq * idf
 
-            pointers = [0] * len(postings_lists)
-            result = set()
 
-            while True:
-                current_docs = [pl[ptr].doc_id for pl, ptr in zip(postings_lists, pointers)]
+class BM25:
+    """Реалізація алгоритму BM25 для ранжування"""
 
-                if len(set(current_docs)) == 1:
-                    result.add(current_docs[0])
-                    pointers = [ptr + 1 for ptr in pointers]
-                else:
-                    max_doc = max(current_docs)
-                    for i, (pl, ptr) in enumerate(zip(postings_lists, pointers)):
-                        while ptr < len(pl) and pl[ptr].doc_id < max_doc:
-                            ptr += 1
-                        pointers[i] = ptr
+    def __init__(self, k1: float = 1.5, b: float = 0.75):
+        self.k1 = k1
+        self.b = b
 
-                if any(ptr >= len(pl) for pl, ptr in zip(postings_lists, pointers)):
-                    break
+    def score(self, term: str, freq: int, doc_len: int, index) -> float:
+        df = index.df(term)
+        if df == 0:
+            return 0.0
 
-            return result
+        idf = math.log((index.num_docs - df + 0.5) / (df + 0.5) + 1.0)
 
-    def search_or(self, terms: List[str]) -> Set[int]:
-        """виконання операції OR для списку термінів"""
-        if not terms:
-            return set()
+        avg_dl = index.avg_doc_length
+        if avg_dl == 0:
+            avg_dl = 1.0
 
-        result = set()
-        for term in terms:
-            postings = self.index.index.get(term, [])
-            for p in postings:
-                result.add(p.doc_id)
+        numerator = freq * (self.k1 + 1)
+        denominator = freq + self.k1 * (1.0 - self.b + self.b * (doc_len / avg_dl))
+
+        return idf * (numerator / denominator)
+
+
+def timed(func):
+    """Декоратор для вимірювання часу виконання функцій з functools.wraps"""
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = time.perf_counter()
+        result = func(*args, **kwargs)
+        end_time = time.perf_counter()
+        duration_ms = (end_time - start_time) * 1000
+        print(f"[TIMED] Функція '{func.__name__}' виконалась за {duration_ms:.2f} мс")
         return result
 
-    def search_not(self, base_docs: Set[int], exclude_terms: List[str]) -> Set[int]:
-        """виконання операції NOT"""
-        exclude_docs = self.search_or(exclude_terms)
-        return base_docs - exclude_docs
+    return wrapper
+
+
+def generate_snippet(text: str, term: str, window: int = 80) -> str:
+    """Генерує контекстний сніпет: вікно ±80 символів навколо терміна"""
+    lower_text = text.lower()
+    lower_term = term.lower()
+
+    pos = lower_text.find(lower_term)
+    if pos == -1:
+        return text[:window * 2] + "..." if len(text) > window * 2 else text
+
+    start = max(0, pos - window)
+    end = min(len(text), pos + len(term) + window)
+
+    snippet = text[start:end]
+    if start > 0:
+        snippet = "..." + snippet
+    if end < len(text):
+        snippet = snippet + "..."
+
+    return snippet
+
+
+@timed
+def rank_documents(query_terms: List[str], index, scorer, top_k: int = 5) -> List[SearchResult]:
+    """Ранжує документи за заданими термінами, використовуючи скрорер і heapq.nlargest"""
+    scores = {}
+
+    for term in query_terms:
+        if term in index:
+            for posting in index[term]:
+                doc_meta = index._doc_metas.get(posting.doc_id)
+                doc_len = doc_meta.length if doc_meta else 100
+
+                term_score = scorer.score(term, posting.freq, doc_len, index)
+                scores[posting.doc_id] = scores.get(posting.doc_id, 0.0) + term_score
+
+    results = [SearchResult(score=s, doc_id=doc_id) for doc_id, s in scores.items()]
+    return heapq.nlargest(top_k, results)
+
+
+
+class QueryNode:
+    """Базовий клас для вузлів синтаксичного дерева запиту"""
+
+    def evaluate(self, index) -> Set[int]:
+        raise NotImplementedError
+
+    def __and__(self, other):
+        return AndNode(self, other)
+
+    def __or__(self, other):
+        return OrNode(self, other)
+
+    def __invert__(self):
+        return NotNode(self)
+
+
+class TermNode(QueryNode):
+    def __init__(self, term: str):
+        self.term = term
+
+    def evaluate(self, index) -> Set[int]:
+        postings = index.get(self.term, [])
+        return {p.doc_id for p in postings}
+
+
+class AndNode(QueryNode):
+    def __init__(self, left: QueryNode, right: QueryNode):
+        self.left = left
+        self.right = right
+
+    def evaluate(self, index) -> Set[int]:
+        return self.left.evaluate(index) & self.right.evaluate(index)
+
+
+class OrNode(QueryNode):
+    def __init__(self, left: QueryNode, right: QueryNode):
+        self.left = left
+        self.right = right
+
+    def evaluate(self, index) -> Set[int]:
+        return self.left.evaluate(index) | self.right.evaluate(index)
+
+
+class NotNode(QueryNode):
+    def __init__(self, node: QueryNode):
+        self.node = node
+
+    def evaluate(self, index) -> Set[int]:
+        all_docs = set(index._doc_metas.keys())
+        return all_docs - self.node.evaluate(index)
+
+
+
+class QueryParser:
+    """Простий лексер і парсер на основі рекурсивного спуску для булевих запитів."""
+
+    def __init__(self, tokens: List[str]):
+        self.tokens = tokens
+        self.pos = 0
+
+    def peek(self) -> Union[str, None]:
+        if self.pos < len(self.tokens):
+            return self.tokens[self.pos]
+        return None
+
+    def consume(self) -> Union[str, None]:
+        token = self.peek()
+        self.pos += 1
+        return token
+
+    def parse(self) -> QueryNode:
+        return self.parse_or()
+
+    def parse_or(self) -> QueryNode:
+        node = self.parse_and()
+        while self.peek() == "OR":
+            self.consume()
+            right = self.parse_and()
+            node = OrNode(node, right)
+        return node
+
+    def parse_and(self) -> QueryNode:
+        node = self.parse_unary()
+        while self.peek() == "AND":
+            self.consume()
+            right = self.parse_unary()
+            node = AndNode(node, right)
+        return node
+
+    def parse_unary(self) -> QueryNode:
+        if self.peek() == "NOT":
+            self.consume()
+            node = self.parse_unary()
+            return NotNode(node)
+        return self.parse_primary()
+
+    def parse_primary(self) -> QueryNode:
+        token = self.consume()
+        if token == "(":
+            node = self.parse_or()
+            if self.consume() != ")":
+                raise SyntaxError("Очікувалась закривча дужка ')'")
+            return node
+        elif token and token.isalnum():
+            return TermNode(token.lower())
+        else:
+            raise SyntaxError(f"Неочікуваний токен у запиті: {token}")
+
+
+def parse_query(query_str: str) -> QueryNode:
+    """Допоміжна функція для токенізації та парсингу рядка запиту."""
+    tokens = re.findall(r'\(|\)|AND|OR|NOT|[a-zA-Zа-яА-Я0-9_]+', query_str)
+    parser = QueryParser(tokens)
+    return parser.parse()
