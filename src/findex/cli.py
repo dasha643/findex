@@ -2,16 +2,21 @@ import logging
 import sys
 import time
 import tracemalloc
+import json
+import asyncio
 from pathlib import Path
 from typing import Literal
 
 import typer
+import httpx
 from rich.console import Console
 from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
 
 from findex.inverted import InvertedIndex
 from findex.parallel import run_build
 from findex.search import parse_query
+from findex.crawler import crawl, CrawlStats
 
 logging.basicConfig(
     stream=sys.stderr,
@@ -51,7 +56,6 @@ def index(
         start_time = time.perf_counter()
 
         index_obj, _ = run_build(corpus_path, executor, workers)
-
         index_obj.save_pickle(out)
 
         elapsed = time.perf_counter() - start_time
@@ -101,7 +105,6 @@ def search(
         tracemalloc.stop()
 
         if json_output:
-            import json
             print(json.dumps({"results": sorted_results, "count": len(sorted_results)}))
         else:
             table = Table(title="Search Results")
@@ -142,6 +145,59 @@ def stats(
 
     except Exception as e:
         logger.error(f"Error loading stats: {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def crawl_cmd(
+        start_url: str = typer.Argument(..., help="Початковий URL для обходу"),
+        out: str = typer.Option("crawl.jsonl", "--out", help="Файл для збереження JSONL"),
+        log_file: str = typer.Option("crawl.log", "--log", help="Файл логу"),
+        max_pages: int = typer.Option(200, "--max-pages", help="Максимальна кількість сторінок"),
+        concurrency: int = typer.Option(10, "--concurrency", help="Кількість одночасних запитів"),
+        max_depth: int = typer.Option(3, "--depth", help="Максимальна глибина обходу"),
+) -> None:
+    """Асинхронний кролер для збору сторінок."""
+
+    async def run_crawl():
+        stats = CrawlStats()
+        headers = {"User-Agent": "FindexCrawler/1.0 (+https://github.com/dasha643/findex)"}
+
+        async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
+            with open(out, "w", encoding="utf-8") as f_out, open(log_file, "w", encoding="utf-8") as f_log:
+                with Progress(
+                        SpinnerColumn(),
+                        TextColumn("[progress.description]{task.description}"),
+                        BarColumn(),
+                        TextColumn("{task.completed}/{task.total} сторінок"),
+                        TextColumn("| {task.fields[stats]}"),
+                        TimeElapsedColumn(),
+                        console=console,
+                ) as progress:
+                    task = progress.add_task("[cyan]Кроулінг...", total=max_pages, stats="")
+
+                    async for page in crawl(
+                            start_url=start_url,
+                            client=client,
+                            max_pages=max_pages,
+                            concurrency=concurrency,
+                            max_depth=max_depth,
+                            stats=stats,
+                    ):
+                        f_out.write(json.dumps(page, ensure_ascii=False) + "\n")
+                        f_out.flush()
+
+                        f_log.write(f"{page['status']} {page['url']} ({page['size']} bytes, {page['elapsed']:.2f}s)\n")
+                        f_log.flush()
+
+                        stats_str = f"{stats.pages_per_sec:.1f} p/s | Wait: {stats.active_requests} | Err: {stats.errors} | Q: {stats.queue_depth}"
+                        progress.update(task, advance=1, stats=stats_str)
+
+    try:
+        asyncio.run(run_crawl())
+        console.print(f"[green]Кроулінг завершено! Дані збережено у {out}[/green]")
+    except Exception as e:
+        console.print(f"[red]Помилка під час кроулінгу: {e}[/red]")
         raise typer.Exit(code=1)
 
 

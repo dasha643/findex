@@ -7,6 +7,7 @@ src/findex/index.py
 src/findex/indexer.py
 src/findex/inverted.py
 src/findex/models.py
+src/findex/parallel.py
 src/findex/search.py
 src/findex.egg-info/PKG-INFO
 src/findex.egg-info/SOURCES.txt
@@ -16,5 +17,6 @@ src/findex.egg-info/requires.txt
 src/findex.egg-info/top_level.txt
 tests/test_cli.py
 tests/test_hypothesis.py
+tests/test_parallel.py
 tests/test_search.py
 tests/test_tokenizer.py

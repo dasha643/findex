@@ -1,3 +1,4 @@
+import json
 import re
 import unicodedata
 from collections import Counter
@@ -7,13 +8,28 @@ from typing import Any
 
 
 def iter_documents(corpus_dir: Path) -> Iterator[tuple[str, str]]:
-    """Генератор, що читає документи по одному, не завантажуючи весь корпус у пам'ять."""
+    """Генератор, що читає документи (txt або jsonl)."""
+    # Спочатку шукаємо .txt файли
     for file_path in corpus_dir.rglob("*.txt"):
         if file_path.is_file():
             try:
                 content = file_path.read_text(encoding="utf-8")
                 yield str(file_path), content
             except (OSError, UnicodeDecodeError):
+                continue
+
+    for file_path in corpus_dir.rglob("*.jsonl"):
+        if file_path.is_file():
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if not line.strip():
+                            continue
+                        data = json.loads(line)
+                        url = data.get("url", str(file_path))
+                        text = data.get("text", "")
+                        yield url, text
+            except (OSError, json.JSONDecodeError):
                 continue
 
 
