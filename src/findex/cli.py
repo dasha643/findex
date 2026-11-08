@@ -6,13 +6,12 @@ from pathlib import Path
 from typing import Literal
 
 import typer
-from findex.inverted import InvertedIndex
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
-from findex.search import parse_query
 
-from findex.indexer import iter_documents, tokenize
+from findex.inverted import InvertedIndex
+from findex.parallel import run_build
+from findex.search import parse_query
 
 logging.basicConfig(
     stream=sys.stderr,
@@ -27,9 +26,13 @@ console = Console(stderr=True)
 
 @app.command()
 def index(
-    data_dir: str = typer.Argument(..., help="Path to corpus directory"),
-    out: str = typer.Option(..., "--out", help="Path to output index file"),
-    verbose: int = typer.Option(0, "--verbose", "-v", count=True, help="Increase verbosity (-v for INFO, -vv for DEBUG)"),
+        data_dir: str = typer.Argument(..., help="Path to corpus directory"),
+        out: str = typer.Option(..., "--out", help="Path to output index file"),
+        workers: int = typer.Option(1, "--workers", help="Number of workers"),
+        executor: Literal["serial", "threads", "processes"] = typer.Option(
+            "serial", "--executor", help="Execution mode"
+        ),
+        verbose: int = typer.Option(0, "--verbose", "-v", count=True, help="Increase verbosity"),
 ) -> None:
     """Build and save inverted index."""
     if verbose == 1:
@@ -43,28 +46,12 @@ def index(
             logger.error(f"Directory {data_dir} does not exist.")
             raise typer.Exit(code=1)
 
-        logger.info(f"Building index from directory: {data_dir}")
+        logger.info(f"Building index from {data_dir} with {executor}, workers={workers}")
         tracemalloc.start()
         start_time = time.perf_counter()
 
-        tokenized_docs: list[tuple[int, str, list[str]]] = []
-        doc_id = 1
+        index_obj, _ = run_build(corpus_path, executor, workers)
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            task = progress.add_task("[cyan]Processing documents...", total=None)
-            for file_path, content in iter_documents(corpus_path):
-                tokens = list(tokenize(content))
-                title = str(file_path)
-                tokenized_docs.append((doc_id, title, tokens))
-                doc_id += 1
-            progress.update(task, completed=True)
-
-        index_obj = InvertedIndex()
-        index_obj.build(tokenized_docs)
         index_obj.save_pickle(out)
 
         elapsed = time.perf_counter() - start_time
@@ -74,18 +61,18 @@ def index(
         console.print(f"[green]Index successfully saved to {out}[/green]")
         logger.info(f"Build time: {elapsed:.4f} sec, Peak memory: {peak / 1024 / 1024:.2f} MB")
 
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"Error during indexing: {e}")
         raise typer.Exit(code=1)
 
 
 @app.command()
 def search(
-    index_file: str = typer.Argument(..., help="Path to saved index file"),
-    query: str = typer.Argument(..., help="Search query"),
-    engine: Literal["merge", "set"] = typer.Option("merge", "--engine", help="Search engine method"),
-    json_output: bool = typer.Option(False, "--json", help="Output results as JSON to stdout"),
-    verbose: int = typer.Option(0, "--verbose", "-v", count=True, help="Increase verbosity"),
+        index_file: str = typer.Argument(..., help="Path to saved index file"),
+        query: str = typer.Argument(..., help="Search query"),
+        engine: Literal["merge", "set"] = typer.Option("merge", "--engine", help="Search engine method"),
+        json_output: bool = typer.Option(False, "--json", help="Output results as JSON to stdout"),
+        verbose: int = typer.Option(0, "--verbose", "-v", count=True, help="Increase verbosity"),
 ) -> None:
     """Search in saved index."""
     if verbose == 1:
@@ -105,7 +92,6 @@ def search(
         index_obj = InvertedIndex()
         index_obj.load_pickle(index_file)
 
-        # Парсимо та виконуємо булевий запит через синтаксичне дерево
         query_node = parse_query(query)
         results: set[int] = query_node.evaluate(index_obj)
         sorted_results: list[int] = sorted(results)
@@ -128,16 +114,17 @@ def search(
                 table.add_row(str(doc_id), str(doc_title))
 
             console.print(table)
-            logger.info(f"Found documents: {len(sorted_results)}, Search time: {elapsed * 1000:.4f} ms, Peak memory: {peak / 1024 / 1024:.2f} MB")
+            logger.info(
+                f"Found documents: {len(sorted_results)}, Search time: {elapsed * 1000:.4f} ms, Peak memory: {peak / 1024 / 1024:.2f} MB")
 
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"Search error: {e}")
         raise typer.Exit(code=1)
 
 
 @app.command()
 def stats(
-    index_file: str = typer.Argument(..., help="Path to saved index file"),
+        index_file: str = typer.Argument(..., help="Path to saved index file"),
 ) -> None:
     """Show index statistics."""
     try:
@@ -153,7 +140,7 @@ def stats(
         console.print(f"Total documents: {len(getattr(index_obj, 'docs', {}))}")
         console.print(f"Total unique terms: {len(getattr(index_obj, 'index', {}))}")
 
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"Error loading stats: {e}")
         raise typer.Exit(code=1)
 

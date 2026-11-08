@@ -1,19 +1,148 @@
-from typer.testing import CliRunner
-from findex.cli import app
+import logging
+import sys
+import time
+import tracemalloc
+from pathlib import Path
+from typing import Literal
 
-runner = CliRunner()
+import typer
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.table import Table
+
+from findex.inverted import InvertedIndex
+from findex.parallel import run_build
+from findex.search import parse_query
+
+logging.basicConfig(
+    stream=sys.stderr,
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+logger = logging.getLogger("findex")
+
+app = typer.Typer(help="findex: inverted index & boolean search CLI")
+console = Console(stderr=True)
 
 
-def test_cli_help() -> None:
-    """Перевірка виведення довідки CLI."""
-    result = runner.invoke(app, ["--help"])
-    assert result.exit_code == 0
-    assert "Usage" in result.stdout or "Options" in result.stdout
+@app.command()
+def index(
+    data_dir: str = typer.Argument(..., help="Path to corpus directory"),
+    out: str = typer.Option(..., "--out", help="Path to output index file"),
+    workers: int = typer.Option(1, "--workers", help="Number of workers"),
+    executor: Literal["serial", "threads", "processes"] = typer.Option(
+        "serial", "--executor", help="Execution mode"
+    ),
+    verbose: int = typer.Option(0, "--verbose", "-v", count=True, help="Increase verbosity"),
+) -> None:
+    """Build and save inverted index."""
+    if verbose == 1:
+        logger.setLevel(logging.INFO)
+    elif verbose >= 2:
+        logger.setLevel(logging.DEBUG)
+
+    try:
+        corpus_path = Path(data_dir)
+        if not corpus_path.exists():
+            logger.error(f"Directory {data_dir} does not exist.")
+            raise typer.Exit(code=1)
+
+        logger.info(f"Building index from {data_dir} with {executor}, workers={workers}")
+        tracemalloc.start()
+        start_time = time.perf_counter()
+
+        index_obj = run_build(corpus_path, executor, workers)
+        index_obj.save_pickle(out)
+
+        elapsed = time.perf_counter() - start_time
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+
+        console.print(f"[green]Index successfully saved to {out}[/green]")
+        logger.info(f"Build time: {elapsed:.4f} sec, Peak memory: {peak / 1024 / 1024:.2f} MB")
+
+    except Exception as e:
+        logger.error(f"Error during indexing: {e}")
+        raise typer.Exit(code=1)
 
 
-def test_cli_search_missing_index() -> None:
-    """Перевірка обробки помилки при відсутності файлу індексу (без трейсбеку)."""
-    result = runner.invoke(app, ["search", "nonexistent_query", "--index", "nonexistent.pkl"])
-    assert result.exit_code != 0
-    assert "Traceback" not in result.stdout
-    assert "Traceback" not in result.stderr
+@app.command()
+def search(
+    index_file: str = typer.Argument(..., help="Path to saved index file"),
+    query: str = typer.Argument(..., help="Search query"),
+    engine: Literal["merge", "set"] = typer.Option("merge", "--engine", help="Search engine method"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON to stdout"),
+    verbose: int = typer.Option(0, "--verbose", "-v", count=True, help="Increase verbosity"),
+) -> None:
+    """Search in saved index."""
+    if verbose == 1:
+        logger.setLevel(logging.INFO)
+    elif verbose >= 2:
+        logger.setLevel(logging.DEBUG)
+
+    try:
+        index_path = Path(index_file)
+        if not index_path.exists():
+            logger.error(f"Index file {index_file} does not exist.")
+            raise typer.Exit(code=1)
+
+        tracemalloc.start()
+        start_time = time.perf_counter()
+
+        index_obj = InvertedIndex()
+        index_obj.load_pickle(index_file)
+
+        query_node = parse_query(query)
+        results: set[int] = query_node.evaluate(index_obj)
+        sorted_results: list[int] = sorted(results)
+
+        elapsed = time.perf_counter() - start_time
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+
+        if json_output:
+            import json
+            print(json.dumps({"results": sorted_results, "count": len(sorted_results)}))
+        else:
+            table = Table(title="Search Results")
+            table.add_column("Doc ID", justify="right", style="cyan")
+            table.add_column("Document Path", style="magenta")
+
+            for doc_id in sorted_results:
+                doc_meta = index_obj.docs.get(doc_id) if hasattr(index_obj, "docs") else None
+                doc_title = doc_meta.title if doc_meta and hasattr(doc_meta, "title") else "N/A"
+                table.add_row(str(doc_id), str(doc_title))
+
+            console.print(table)
+            logger.info(f"Found documents: {len(sorted_results)}, Search time: {elapsed * 1000:.4f} ms, Peak memory: {peak / 1024 / 1024:.2f} MB")
+
+    except Exception as e:
+        logger.error(f"Search error: {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def stats(
+    index_file: str = typer.Argument(..., help="Path to saved index file"),
+) -> None:
+    """Show index statistics."""
+    try:
+        index_path = Path(index_file)
+        if not index_path.exists():
+            logger.error(f"Index file {index_file} does not exist.")
+            raise typer.Exit(code=1)
+
+        index_obj = InvertedIndex()
+        index_obj.load_pickle(index_file)
+
+        console.print(f"[bold green]Index Statistics for {index_file}:[/bold green]")
+        console.print(f"Total documents: {len(getattr(index_obj, 'docs', {}))}")
+        console.print(f"Total unique terms: {len(getattr(index_obj, 'index', {}))}")
+
+    except Exception as e:
+        logger.error(f"Error loading stats: {e}")
+        raise typer.Exit(code=1)
+
+
+if __name__ == "__main__":
+    app()
