@@ -104,9 +104,13 @@ def search(
         scorer: str = "default",
         index: InvertedIndex = Depends(get_index),
 ):
-    query_node = parse_query(q)
-    results_set = query_node.evaluate(index)
-    sorted_results = sorted(results_set)
+    try:
+        query_node = parse_query(q)
+        results_set = query_node.evaluate(index)
+        sorted_results = sorted(results_set)
+    except Exception as e:
+        logger.warning(f"Search failed for query '{q}': {e}")
+        sorted_results = []
 
     total = len(sorted_results)
     start = (page - 1) * k
