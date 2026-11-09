@@ -31,14 +31,13 @@ def test_search_success(client):
         def evaluate(self, index):
             return {1}
 
-    with patch("findex.web.app.parse_query", return_value=FakeNode()):
+    with patch("findex.web.app.search_numpy_bm25", return_value=[(1, 1.0)]):
         response = client.get("/search?q=hello")
         assert response.status_code == 200
         data = response.json()
         assert data["query"] == "hello"
         assert data["total"] == 1
         assert data["results"][0]["doc_id"] == 1
-
 
 def test_search_validation_error(client):
     response = client.get("/search")

@@ -5,31 +5,104 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>findex — Пошук</title>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f4f4f9; }
-        h1 { color: #333; }
-        .search-box { display: flex; gap: 10px; margin-bottom: 20px; }
-        .search-box input { flex-grow: 1; padding: 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 4px; }
-        .search-box button { padding: 10px 20px; font-size: 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
-        .search-box button:hover { background: #0056b3; }
-        .result { background: white; padding: 15px; margin-bottom: 15px; border-radius: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .result h3 { margin: 0 0 10px 0; color: #007bff; }
-        .result .score { font-size: 12px; color: #888; margin-bottom: 5px; }
-        .result .snippet { color: #555; line-height: 1.4; }
-        .pagination { display: flex; justify-content: center; gap: 10px; margin-top: 20px; }
-        .pagination button { padding: 8px 16px; background: #fff; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; }
-        .pagination button:disabled { background: #eee; cursor: not-allowed; }
-        .error { color: red; font-weight: bold; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f8f9fa;
+            color: #333;
+        }
+        h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+
+        .search-box {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+        .search-box input {
+            flex-grow: 1;
+            padding: 12px;
+            font-size: 16px;
+            border: 1px solid #bdc3c7;
+            border-radius: 6px;
+            outline: none;
+            min-width: 200px;
+        }
+        .search-box input:focus { border-color: #3498db; box-shadow: 0 0 5px rgba(52, 152, 219, 0.5); }
+
+        .search-box select {
+            padding: 12px;
+            font-size: 16px;
+            border: 1px solid #bdc3c7;
+            border-radius: 6px;
+            background: white;
+            cursor: pointer;
+            outline: none;
+        }
+        .search-box select:focus { border-color: #3498db; }
+
+        .search-box button {
+            padding: 12px 24px;
+            font-size: 16px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        .search-box button:hover { background: #2980b9; }
+
+        .result {
+            background: white;
+            padding: 20px;
+            margin-bottom: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            border-left: 4px solid #3498db;
+        }
+        .result h3 { margin: 0 0 10px 0; }
+        .result a { color: #2c3e50; text-decoration: none; }
+        .result a:hover { color: #3498db; text-decoration: underline; }
+        .result .meta { font-size: 12px; color: #7f8c8d; margin-bottom: 10px; }
+        .result .snippet { color: #555; line-height: 1.5; background: #f1f2f6; padding: 10px; border-radius: 4px; }
+
+        .pagination { display: flex; justify-content: center; gap: 10px; margin-top: 30px; align-items: center; }
+        .pagination button {
+            padding: 8px 16px;
+            background: white;
+            border: 1px solid #bdc3c7;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .pagination button:hover:not(:disabled) { background: #ecf0f1; }
+        .pagination button:disabled { background: #f8f9fa; color: #bdc3c7; cursor: not-allowed; }
+        .pagination span { font-size: 14px; color: #7f8c8d; }
+
+        #error-message { color: #e74c3c; font-weight: bold; margin-bottom: 20px; }
+        #loading { display: none; color: #7f8c8d; font-style: italic; }
     </style>
 </head>
 <body>
-    <h1>findex — Пошук</h1>
+    <h1>🔍 findex — Пошук</h1>
 
     <div class="search-box">
         <input type="text" id="query-input" placeholder="Введіть запит (наприклад, python & async)...">
+
+        <select id="mode-select" title="Режим пошуку">
+            <option value="bm25">BM25 (за словами)</option>
+            <option value="semantic">Semantic (за змістом)</option>
+            <option value="hybrid">Hybrid (мікс)</option>
+        </select>
+
         <button onclick="performSearch()">Шукати</button>
     </div>
 
-    <div id="error-message" class="error"></div>
+    <div id="error-message"></div>
+    <div id="loading">⏳ Завантаження...</div>
     <div id="results-container"></div>
     <div id="pagination" class="pagination"></div>
 
@@ -38,6 +111,8 @@
 
         async function performSearch(page = 1) {
             const query = document.getElementById('query-input').value.trim();
+            const mode = document.getElementById('mode-select').value;
+
             if (!query) {
                 alert("Будь ласка, введіть пошуковий запит");
                 return;
@@ -45,10 +120,14 @@
 
             currentPage = page;
             document.getElementById('error-message').textContent = '';
-            document.getElementById('results-container').innerHTML = 'Завантаження...';
+            document.getElementById('results-container').innerHTML = '';
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('pagination').innerHTML = '';
 
             try {
-                const response = await fetch(`/search?q=${encodeURIComponent(query)}&page=${page}&k=5`);
+                // Передаємо &mode=${mode} в API
+                const response = await fetch(`/search?q=${encodeURIComponent(query)}&page=${page}&k=5&mode=${mode}`);
+
                 if (!response.ok) {
                     throw new Error(`Помилка сервера: ${response.status}`);
                 }
@@ -57,7 +136,8 @@
                 renderResults(data);
             } catch (error) {
                 document.getElementById('error-message').textContent = error.message;
-                document.getElementById('results-container').innerHTML = '';
+            } finally {
+                document.getElementById('loading').style.display = 'none';
             }
         }
 
@@ -66,7 +146,7 @@
             container.innerHTML = '';
 
             if (data.results.length === 0) {
-                container.innerHTML = '<p>Нічого не знайдено.</p>';
+                container.innerHTML = '<p>🤷‍♂️ Нічого не знайдено за цим запитом.</p>';
                 return;
             }
 
@@ -74,9 +154,9 @@
                 const div = document.createElement('div');
                 div.className = 'result';
                 div.innerHTML = `
-                    <h3><a href="/docs/${item.doc_id}" target="_blank">${item.title}</a></h3>
-                    <div class="score">Doc ID: ${item.doc_id} | Score: ${item.score}</div>
-                    <div class="snippet">${item.snippet}</div>
+                    <h3><a href="/docs/${item.doc_id}" target="_blank">${item.title || 'Документ #' + item.doc_id}</a></h3>
+                    <div class="meta">Doc ID: ${item.doc_id} | Score: ${item.score.toFixed(4)}</div>
+                    <div class="snippet">${item.snippet || 'Фрагмент тексту недоступний.'}</div>
                 `;
                 container.appendChild(div);
             });
@@ -92,23 +172,23 @@
             if (totalPages <= 1) return;
 
             const prevBtn = document.createElement('button');
-            prevBtn.textContent = 'Попередня';
+            prevBtn.textContent = '← Попередня';
             prevBtn.disabled = page <= 1;
             prevBtn.onclick = () => performSearch(page - 1);
             container.appendChild(prevBtn);
 
             const pageInfo = document.createElement('span');
             pageInfo.textContent = `Сторінка ${page} з ${totalPages}`;
-            pageInfo.style.alignSelf = 'center';
             container.appendChild(pageInfo);
 
             const nextBtn = document.createElement('button');
-            nextBtn.textContent = 'Наступна';
+            nextBtn.textContent = 'Наступна →';
             nextBtn.disabled = page >= totalPages;
             nextBtn.onclick = () => performSearch(page + 1);
             container.appendChild(nextBtn);
         }
 
+        // Обробка натискання Enter
         document.getElementById('query-input').addEventListener('keypress', function (e) {
             if (e.key === 'Enter') performSearch();
         });

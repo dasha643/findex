@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from functools import wraps
 from typing import Any, Protocol, TypeVar
 
+import numpy as np  # <--- ДОДАНО ДЛЯ ЛАБИ 8
+
 
 @dataclass(order=True)
 class SearchResult:
@@ -17,6 +19,7 @@ class SearchResult:
 
 class Scorer(Protocol):
     """Протокол для класів ранжування (TF-IDF, BM25)"""
+
     def score(self, term: str, freq: int, doc_len: int, index: Any) -> float:
         ...
 
@@ -226,3 +229,51 @@ def parse_query(query_str: str) -> QueryNode:
     tokens = re.findall(r'\(|\)|AND|OR|NOT|[a-zA-Zа-яА-Яа-їґєії0-9_]+', query_str)
     parser = QueryParser(tokens)
     return parser.parse()
+
+
+# =====================================================================
+# НОВІ ФУНКЦІЇ ДЛЯ ЛАБОРАТОРНОЇ 8 (NumPy та Semantic Search)
+# =====================================================================
+
+def search_numpy_bm25(index: Any, query_terms: list[str], top_k: int = 10) -> list[tuple[int, float]]:
+    """
+    Виконує BM25 пошук через NumPy масиви (використовується NumpyInvertedIndex).
+    Повертає список (doc_id, score).
+    """
+    total_scores: dict[int, float] = {}
+
+    for term in query_terms:
+        # Викликаємо векторизований метод з NumpyInvertedIndex
+        scores_arr = index.bm25_score(term)
+
+        # scores_arr - це двовимірний масив [[doc_id, score], ...]
+        for row in scores_arr:
+            doc_id = int(row[0])
+            score = float(row[1])
+            total_scores[doc_id] = total_scores.get(doc_id, 0.0) + score
+
+    # Сортуємо результати і беремо топ-k
+    sorted_results = sorted(total_scores.items(), key=lambda x: x[1], reverse=True)
+    return sorted_results[:top_k]
+
+
+def reciprocal_rank_fusion(
+        bm25_results: list[tuple[int, float]],
+        semantic_results: list[tuple[int, float]],
+        k: int = 60
+) -> list[tuple[int, float]]:
+    """
+    Зливає два рейтинги через Reciprocal Rank Fusion (RRF).
+    """
+    rrf_scores: dict[int, float] = {}
+
+    # Додаємо бали за BM25 (чим вище ранг, тим більше балів)
+    for rank, (doc_id, _) in enumerate(bm25_results):
+        rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + 1.0 / (k + rank + 1)
+
+    # Додаємо бали за семантичний пошук
+    for rank, (doc_id, _) in enumerate(semantic_results):
+        rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + 1.0 / (k + rank + 1)
+
+    # Сортуємо за сумарним балом RRF
+    return sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)

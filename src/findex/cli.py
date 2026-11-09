@@ -14,10 +14,16 @@ from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
 
-from findex.inverted import InvertedIndex
-from findex.parallel import run_build
-from findex.search import parse_query
-from findex.crawler import crawl, CrawlStats
+# Імпорти для Лабораторної 8
+from findex.numpy_index import NumpyInvertedIndex
+from findex.embedder import SemanticIndex
+from findex.search import (
+    search_numpy_bm25,
+    reciprocal_rank_fusion,
+    parse_query,
+)
+from findex.indexer import tokenize
+from findex.parallel import collect_paths, build_partial
 
 logging.basicConfig(
     stream=sys.stderr,
@@ -40,7 +46,7 @@ def index(
         ),
         verbose: int = typer.Option(0, "--verbose", "-v", count=True, help="Increase verbosity"),
 ) -> None:
-    """Build and save inverted index."""
+    """Build and save inverted index (NumPy format)."""
     if verbose == 1:
         logger.setLevel(logging.INFO)
     elif verbose >= 2:
@@ -52,18 +58,50 @@ def index(
             logger.error(f"Directory {data_dir} does not exist.")
             raise typer.Exit(code=1)
 
-        logger.info(f"Building index from {data_dir} with {executor}, workers={workers}")
+        logger.info(f"Building NumPy index from {data_dir}...")
         tracemalloc.start()
         start_time = time.perf_counter()
 
-        index_obj, _ = run_build(corpus_path, executor, workers)
-        index_obj.save_pickle(out)
+        # Отримуємо всі шляхи до файлів
+        paths = collect_paths(corpus_path)
+
+        # Розбиваємо на шматки для паралельної обробки (якщо треба)
+        chunk_size = (len(paths) + workers - 1) // workers if workers > 0 else len(paths)
+        chunks = []
+        start_id = 1
+        for i in range(0, len(paths), chunk_size):
+            chunk = paths[i:i + chunk_size]
+            chunks.append((chunk, start_id))
+            start_id += len(chunk)
+
+        # Збираємо токенізовані документи
+        all_docs = []
+        if executor == "serial" or workers == 1:
+            for chunk, sid in chunks:
+                all_docs.extend(build_partial(chunk, sid))
+        elif executor == "threads":
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                futures = [ex.submit(build_partial, chunk, sid) for chunk, sid in chunks]
+                for f in futures:
+                    all_docs.extend(f.result())
+        elif executor == "processes":
+            from concurrent.futures import ProcessPoolExecutor
+            with ProcessPoolExecutor(max_workers=workers) as ex:
+                futures = [ex.submit(build_partial, chunk, sid) for chunk, sid in chunks]
+                for f in futures:
+                    all_docs.extend(f.result())
+
+        # Будуємо NumPy індекс
+        np_index = NumpyInvertedIndex()
+        np_index.build(all_docs)
+        np_index.save_pickle(out)
 
         elapsed = time.perf_counter() - start_time
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
 
-        console.print(f"[green]Index successfully saved to {out}[/green]")
+        console.print(f"[green]NumPy Index successfully saved to {out}[/green]")
         logger.info(f"Build time: {elapsed:.4f} sec, Peak memory: {peak / 1024 / 1024:.2f} MB")
 
     except Exception as e:
@@ -72,14 +110,37 @@ def index(
 
 
 @app.command()
+def embed(
+        data_dir: str = typer.Argument(..., help="Path to corpus directory"),
+        out: str = typer.Option("embeddings.npz", "--out", help="Path to output embeddings file"),
+):
+    """Створює ембединги для семантичного пошуку."""
+    corpus_path = Path(data_dir)
+    if not corpus_path.exists():
+        console.print(f"[red]Directory {data_dir} does not exist.[/red]")
+        raise typer.Exit(code=1)
+
+    paths = collect_paths(corpus_path)
+    console.print(f"[cyan]Створюємо ембединги для {len(paths)} файлів...[/cyan]")
+
+    semantic_idx = SemanticIndex()
+    semantic_idx.embed_corpus(paths)
+    semantic_idx.save(out)
+
+    console.print(f"[green]Ембединги збережено у {out}[/green]")
+
+
+@app.command()
 def search(
         index_file: str = typer.Argument(..., help="Path to saved index file"),
         query: str = typer.Argument(..., help="Search query"),
-        engine: Literal["merge", "set"] = typer.Option("merge", "--engine", help="Search engine method"),
-        json_output: bool = typer.Option(False, "--json", help="Output results as JSON to stdout"),
+        mode: str = typer.Option("bm25", "--mode", help="bm25, semantic, or hybrid"),
+        embeddings_file: str = typer.Option("embeddings.npz", "--embeddings", help="Path to embeddings"),
+        k: int = typer.Option(10, "--k", help="Number of results"),
+        json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
         verbose: int = typer.Option(0, "--verbose", "-v", count=True, help="Increase verbosity"),
 ) -> None:
-    """Search in saved index."""
+    """Search in saved index (BM25, Semantic, or Hybrid)."""
     if verbose == 1:
         logger.setLevel(logging.INFO)
     elif verbose >= 2:
@@ -94,32 +155,58 @@ def search(
         tracemalloc.start()
         start_time = time.perf_counter()
 
-        index_obj = InvertedIndex()
+        # 1. ЗАВЖДИ завантажуємо індекс для відображення назв файлів
+        index_obj = NumpyInvertedIndex()
         index_obj.load_pickle(index_file)
 
-        query_node = parse_query(query)
-        results: set[int] = query_node.evaluate(index_obj)
-        sorted_results: list[int] = sorted(results)
+        bm25_res = []
+        semantic_res = []
+
+        # 2. BM25 через NumPy
+        if mode in ("bm25", "hybrid"):
+            query_terms = list(tokenize(query))
+            bm25_res = search_numpy_bm25(index_obj, query_terms, top_k=k)
+
+        # 3. Семантичний пошук
+        if mode in ("semantic", "hybrid"):
+            if not Path(embeddings_file).exists():
+                logger.error(f"Embeddings file {embeddings_file} not found. Run 'findex embed' first.")
+                raise typer.Exit(code=1)
+            semantic_idx = SemanticIndex()
+            semantic_idx.load(embeddings_file)
+            semantic_res = semantic_idx.search(query, k=k)
+
+        # 4. Об'єднання (RRF)
+        if mode == "bm25":
+            final_res = bm25_res
+        elif mode == "semantic":
+            final_res = semantic_res
+        else:
+            final_res = reciprocal_rank_fusion(bm25_res, semantic_res)[:k]
 
         elapsed = time.perf_counter() - start_time
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
 
         if json_output:
-            print(json.dumps({"results": sorted_results, "count": len(sorted_results)}))
+            print(json.dumps([{"doc_id": d, "score": s} for d, s in final_res]))
         else:
-            table = Table(title="Search Results")
+            table = Table(title=f"Search Results (Mode: {mode})")
+            table.add_column("Rank", justify="right", style="dim")
             table.add_column("Doc ID", justify="right", style="cyan")
+            table.add_column("Score", justify="right", style="green")
             table.add_column("Document Path", style="magenta")
 
-            for doc_id in sorted_results:
-                doc_meta = index_obj.docs.get(doc_id) if hasattr(index_obj, "docs") else None
-                doc_title = doc_meta.title if doc_meta and hasattr(doc_meta, "title") else "N/A"
-                table.add_row(str(doc_id), str(doc_title))
+            for i, (doc_id, score) in enumerate(final_res):
+                title = "N/A"
+                # Тепер index_obj завжди доступний
+                if doc_id in index_obj.docs:
+                    title = index_obj.docs[doc_id].title
+
+                table.add_row(str(i + 1), str(doc_id), f"{score:.4f}", title)
 
             console.print(table)
-            logger.info(
-                f"Found documents: {len(sorted_results)}, Search time: {elapsed * 1000:.4f} ms, Peak memory: {peak / 1024 / 1024:.2f} MB")
+            logger.info(f"Search time: {elapsed * 1000:.2f} ms, Peak memory: {peak / 1024 / 1024:.2f} MB")
 
     except Exception as e:
         logger.error(f"Search error: {e}")
@@ -137,12 +224,12 @@ def stats(
             logger.error(f"Index file {index_file} does not exist.")
             raise typer.Exit(code=1)
 
-        index_obj = InvertedIndex()
+        index_obj = NumpyInvertedIndex()
         index_obj.load_pickle(index_file)
 
         console.print(f"[bold green]Index Statistics for {index_file}:[/bold green]")
-        console.print(f"Total documents: {len(getattr(index_obj, 'docs', {}))}")
-        console.print(f"Total unique terms: {len(getattr(index_obj, 'index', {}))}")
+        console.print(f"Total documents: {len(index_obj.docs)}")
+        console.print(f"Total unique terms: {len(index_obj.index)}")
 
     except Exception as e:
         logger.error(f"Error loading stats: {e}")
@@ -159,6 +246,7 @@ def crawl_cmd(
         max_depth: int = typer.Option(3, "--depth", help="Максимальна глибина обходу"),
 ) -> None:
     """Асинхронний кролер для збору сторінок."""
+    from findex.crawler import crawl, CrawlStats
 
     async def run_crawl():
         stats = CrawlStats()
@@ -187,10 +275,8 @@ def crawl_cmd(
                     ):
                         f_out.write(json.dumps(page, ensure_ascii=False) + "\n")
                         f_out.flush()
-
                         f_log.write(f"{page['status']} {page['url']} ({page['size']} bytes, {page['elapsed']:.2f}s)\n")
                         f_log.flush()
-
                         stats_str = f"{stats.pages_per_sec:.1f} p/s | Wait: {stats.active_requests} | Err: {stats.errors} | Q: {stats.queue_depth}"
                         progress.update(task, advance=1, stats=stats_str)
 
@@ -202,15 +288,13 @@ def crawl_cmd(
         raise typer.Exit(code=1)
 
 
-
 @app.command()
 def serve(
-    port: int = typer.Option(8000, "--port", help="Port to run the server on"),
-    workers: int = typer.Option(1, "--workers", help="Number of uvicorn workers"),
+        port: int = typer.Option(8000, "--port", help="Port to run the server on"),
+        workers: int = typer.Option(1, "--workers", help="Number of uvicorn workers"),
 ):
     """Запуск веб-сервера FastAPI."""
     console.print(f"[green]Starting server on port {port} with {workers} workers...[/green]")
-    # Вказуємо uvicorn шлях до нашого додатку
     uvicorn.run("findex.web.app:app", host="0.0.0.0", port=port, workers=workers)
 
 

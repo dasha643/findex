@@ -28,5 +28,9 @@ jobs:
       - name: Run Pyright (Type Checker)
         run: uv run pyright
 
-      - name: Run Pytest
+      - name: Run Tests
         run: uv run pytest --cov=findex
+
+      # ДОДАНО КРОК ДЛЯ БЕНЧМАРКІВ (Вимога лаби 8)
+      - name: Run Benchmarks
+        run: uv run pytest tests/ --benchmark-only

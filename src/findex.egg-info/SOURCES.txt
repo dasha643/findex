@@ -8,6 +8,7 @@ src/findex/index.py
 src/findex/indexer.py
 src/findex/inverted.py
 src/findex/models.py
+src/findex/numpy_index.py
 src/findex/parallel.py
 src/findex/search.py
 src/findex.egg-info/PKG-INFO
@@ -16,6 +17,7 @@ src/findex.egg-info/dependency_links.txt
 src/findex.egg-info/entry_points.txt
 src/findex.egg-info/requires.txt
 src/findex.egg-info/top_level.txt
+src/findex/web/app.py
 src/findex/web/config.py
 tests/test_cli.py
 tests/test_crawler.py
@@ -23,3 +25,4 @@ tests/test_hypothesis.py
 tests/test_parallel.py
 tests/test_search.py
 tests/test_tokenizer.py
+tests/test_web.py

@@ -9,6 +9,17 @@ class InvertedIndex:
         self.index: dict[str, list[Posting]] = defaultdict(list)
         self.docs: dict[int, DocMeta] = {}
 
+    # --- ДОДАЙТЕ ЦІ МЕТОДИ ---
+    def get(self, term: str, default=None):
+        return self.index.get(term, default)
+
+    def __getitem__(self, term: str):
+        return self.index[term]
+
+    def __contains__(self, term: str):
+        return term in self.index
+    # -------------------------
+
     @property
     def num_docs(self) -> int:
         """Повертає загальну кількість проіндексованих документів."""
