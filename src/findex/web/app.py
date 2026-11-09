@@ -141,4 +141,4 @@ def get_document(doc_id: int, index: InvertedIndex = Depends(get_index)):
 
 @app.get("/")
 def index_page(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="index.html")
