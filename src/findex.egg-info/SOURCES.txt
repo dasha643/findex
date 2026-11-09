@@ -2,6 +2,7 @@ README.md
 pyproject.toml
 src/findex/benchmark.py
 src/findex/cli.py
+src/findex/crawler.py
 src/findex/greedy.py
 src/findex/index.py
 src/findex/indexer.py
@@ -15,7 +16,9 @@ src/findex.egg-info/dependency_links.txt
 src/findex.egg-info/entry_points.txt
 src/findex.egg-info/requires.txt
 src/findex.egg-info/top_level.txt
+src/findex/web/config.py
 tests/test_cli.py
+tests/test_crawler.py
 tests/test_hypothesis.py
 tests/test_parallel.py
 tests/test_search.py

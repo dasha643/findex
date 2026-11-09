@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>findex — Пошук</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f4f4f9; }
+        h1 { color: #333; }
+        .search-box { display: flex; gap: 10px; margin-bottom: 20px; }
+        .search-box input { flex-grow: 1; padding: 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 4px; }
+        .search-box button { padding: 10px 20px; font-size: 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .search-box button:hover { background: #0056b3; }
+        .result { background: white; padding: 15px; margin-bottom: 15px; border-radius: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .result h3 { margin: 0 0 10px 0; color: #007bff; }
+        .result .score { font-size: 12px; color: #888; margin-bottom: 5px; }
+        .result .snippet { color: #555; line-height: 1.4; }
+        .pagination { display: flex; justify-content: center; gap: 10px; margin-top: 20px; }
+        .pagination button { padding: 8px 16px; background: #fff; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; }
+        .pagination button:disabled { background: #eee; cursor: not-allowed; }
+        .error { color: red; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>findex — Пошук</h1>
+
+    <div class="search-box">
+        <input type="text" id="query-input" placeholder="Введіть запит (наприклад, python & async)...">
+        <button onclick="performSearch()">Шукати</button>
+    </div>
+
+    <div id="error-message" class="error"></div>
+    <div id="results-container"></div>
+    <div id="pagination" class="pagination"></div>
+
+    <script>
+        let currentPage = 1;
+
+        async function performSearch(page = 1) {
+            const query = document.getElementById('query-input').value.trim();
+            if (!query) {
+                alert("Будь ласка, введіть пошуковий запит");
+                return;
+            }
+
+            currentPage = page;
+            document.getElementById('error-message').textContent = '';
+            document.getElementById('results-container').innerHTML = 'Завантаження...';
+
+            try {
+                const response = await fetch(`/search?q=${encodeURIComponent(query)}&page=${page}&k=5`);
+                if (!response.ok) {
+                    throw new Error(`Помилка сервера: ${response.status}`);
+                }
+
+                const data = await response.json();
+                renderResults(data);
+            } catch (error) {
+                document.getElementById('error-message').textContent = error.message;
+                document.getElementById('results-container').innerHTML = '';
+            }
+        }
+
+        function renderResults(data) {
+            const container = document.getElementById('results-container');
+            container.innerHTML = '';
+
+            if (data.results.length === 0) {
+                container.innerHTML = '<p>Нічого не знайдено.</p>';
+                return;
+            }
+
+            data.results.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'result';
+                div.innerHTML = `
+                    <h3><a href="/docs/${item.doc_id}" target="_blank">${item.title}</a></h3>
+                    <div class="score">Doc ID: ${item.doc_id} | Score: ${item.score}</div>
+                    <div class="snippet">${item.snippet}</div>
+                `;
+                container.appendChild(div);
+            });
+
+            renderPagination(data.total, data.page, data.k);
+        }
+
+        function renderPagination(total, page, k) {
+            const container = document.getElementById('pagination');
+            container.innerHTML = '';
+
+            const totalPages = Math.ceil(total / k);
+            if (totalPages <= 1) return;
+
+            const prevBtn = document.createElement('button');
+            prevBtn.textContent = 'Попередня';
+            prevBtn.disabled = page <= 1;
+            prevBtn.onclick = () => performSearch(page - 1);
+            container.appendChild(prevBtn);
+
+            const pageInfo = document.createElement('span');
+            pageInfo.textContent = `Сторінка ${page} з ${totalPages}`;
+            pageInfo.style.alignSelf = 'center';
+            container.appendChild(pageInfo);
+
+            const nextBtn = document.createElement('button');
+            nextBtn.textContent = 'Наступна';
+            nextBtn.disabled = page >= totalPages;
+            nextBtn.onclick = () => performSearch(page + 1);
+            container.appendChild(nextBtn);
+        }
+
+        document.getElementById('query-input').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') performSearch();
+        });
+    </script>
+</body>
+</html>

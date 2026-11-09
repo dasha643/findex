@@ -9,6 +9,7 @@ from typing import Literal
 
 import typer
 import httpx
+import uvicorn
 from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
@@ -199,6 +200,18 @@ def crawl_cmd(
     except Exception as e:
         console.print(f"[red]Помилка під час кроулінгу: {e}[/red]")
         raise typer.Exit(code=1)
+
+
+
+@app.command()
+def serve(
+    port: int = typer.Option(8000, "--port", help="Port to run the server on"),
+    workers: int = typer.Option(1, "--workers", help="Number of uvicorn workers"),
+):
+    """Запуск веб-сервера FastAPI."""
+    console.print(f"[green]Starting server on port {port} with {workers} workers...[/green]")
+    # Вказуємо uvicorn шлях до нашого додатку
+    uvicorn.run("findex.web.app:app", host="0.0.0.0", port=port, workers=workers)
 
 
 if __name__ == "__main__":
