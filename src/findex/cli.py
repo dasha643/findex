@@ -14,7 +14,6 @@ from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
 
-# Імпорти для Лабораторної 8
 from findex.numpy_index import NumpyInvertedIndex
 from findex.embedder import SemanticIndex
 from findex.search import (
@@ -62,10 +61,8 @@ def index(
         tracemalloc.start()
         start_time = time.perf_counter()
 
-        # Отримуємо всі шляхи до файлів
         paths = collect_paths(corpus_path)
 
-        # Розбиваємо на шматки для паралельної обробки (якщо треба)
         chunk_size = (len(paths) + workers - 1) // workers if workers > 0 else len(paths)
         chunks = []
         start_id = 1
@@ -74,7 +71,6 @@ def index(
             chunks.append((chunk, start_id))
             start_id += len(chunk)
 
-        # Збираємо токенізовані документи
         all_docs = []
         if executor == "serial" or workers == 1:
             for chunk, sid in chunks:
@@ -92,7 +88,6 @@ def index(
                 for f in futures:
                     all_docs.extend(f.result())
 
-        # Будуємо NumPy індекс
         np_index = NumpyInvertedIndex()
         np_index.build(all_docs)
         np_index.save_pickle(out)
@@ -155,19 +150,16 @@ def search(
         tracemalloc.start()
         start_time = time.perf_counter()
 
-        # 1. ЗАВЖДИ завантажуємо індекс для відображення назв файлів
         index_obj = NumpyInvertedIndex()
         index_obj.load_pickle(index_file)
 
         bm25_res = []
         semantic_res = []
 
-        # 2. BM25 через NumPy
         if mode in ("bm25", "hybrid"):
             query_terms = list(tokenize(query))
             bm25_res = search_numpy_bm25(index_obj, query_terms, top_k=k)
 
-        # 3. Семантичний пошук
         if mode in ("semantic", "hybrid"):
             if not Path(embeddings_file).exists():
                 logger.error(f"Embeddings file {embeddings_file} not found. Run 'findex embed' first.")
@@ -176,7 +168,6 @@ def search(
             semantic_idx.load(embeddings_file)
             semantic_res = semantic_idx.search(query, k=k)
 
-        # 4. Об'єднання (RRF)
         if mode == "bm25":
             final_res = bm25_res
         elif mode == "semantic":
@@ -199,7 +190,7 @@ def search(
 
             for i, (doc_id, score) in enumerate(final_res):
                 title = "N/A"
-                # Тепер index_obj завжди доступний
+
                 if doc_id in index_obj.docs:
                     title = index_obj.docs[doc_id].title
 

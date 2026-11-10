@@ -72,7 +72,6 @@ if __name__ == "__main__":
     print("Будуємо NumPy індекс...")
     np_idx = build_numpy_index(paths)
 
-    # Слово, яке точно є у вашому корпусі (оскільки ви його генерували)
     freq_term = "hello"
     rare_term = "algorithm"  # або будь-яке інше
     query_terms = ["hello", "world", "python"]
@@ -81,19 +80,16 @@ if __name__ == "__main__":
     print(f"{'Запит':<20} | {'Старий (Python)':<15} | {'NumPy':<15} | {'Прискорення':<10}")
     print("-" * 65)
 
-    # 1. Частий терм
     t_old, _ = measure(old_bm25_score, old_idx, freq_term)
     t_np, _ = measure(np_idx.bm25_score, freq_term)
     print(
         f"{'Частий терм (' + freq_term + ')':<20} | {t_old:<15.2f} | {t_np:<15.2f} | {t_old / t_np if t_np else 0:<10.1f}x")
 
-    # 2. Рідкісний терм
     t_old, _ = measure(old_bm25_score, old_idx, rare_term)
     t_np, _ = measure(np_idx.bm25_score, rare_term)
     print(
         f"{'Рідкісний (' + rare_term + ')':<20} | {t_old:<15.2f} | {t_np:<15.2f} | {t_old / t_np if t_np else 0:<10.1f}x")
 
-    # 3. Запит з трьох термів
     t_old_total = 0
     t_np_total = 0
     for term in query_terms:
@@ -105,7 +101,6 @@ if __name__ == "__main__":
     print(
         f"{'Запит з 3 термів':<20} | {t_old_total:<15.2f} | {t_np_total:<15.2f} | {t_old_total / t_np_total if t_np_total else 0:<10.1f}x")
 
-    # Перевірка top-k (np.argpartition)
     scores_np = np_idx.bm25_score(freq_term)
     t_topk, _ = measure(np_idx.get_top_k, scores_np, 10)
     print(f"\nЧас top-k через np.argpartition: {t_topk:.3f} ms")

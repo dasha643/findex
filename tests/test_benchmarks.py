@@ -7,7 +7,6 @@ from findex.indexer import tokenize
 
 @pytest.fixture
 def sample_index():
-    # Беремо невелику частину корпусу для швидкого тесту
     paths = collect_paths(Path("data"))[:100]
     docs = build_partial(paths, 1)
     idx = NumpyInvertedIndex()
@@ -16,7 +15,6 @@ def sample_index():
 
 def test_benchmark_build_index(benchmark):
     paths = collect_paths(Path("data"))[:100]
-    # benchmark запускає функцію багато разів і рахує середній час
     benchmark(build_partial, paths, 1)
 
 def test_benchmark_search(benchmark, sample_index):

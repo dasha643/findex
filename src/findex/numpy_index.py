@@ -6,7 +6,7 @@ from .models import DocMeta
 
 class NumpyInvertedIndex:
     def __init__(self) -> None:
-        # Словник: термін -> масив (N, 2) де [:, 0] = doc_id, [:, 1] = term_freq
+
         self.index: dict[str, np.ndarray] = {}
         self.doc_lens: np.ndarray = np.array([], dtype=np.int32)
         self.docs: dict[int, DocMeta] = {}
@@ -38,7 +38,7 @@ class NumpyInvertedIndex:
 
         for term, postings in temp_index.items():
             arr = np.array(postings, dtype=np.int32)
-            # Сортуємо за doc_id для детермінізму
+
             self.index[term] = arr[arr[:, 0].argsort()]
 
     def save_pickle(self, filepath: str) -> None:
@@ -61,7 +61,6 @@ class NumpyInvertedIndex:
         df = len(doc_ids)
         idf = np.log((self.num_docs - df + 0.5) / (df + 0.5) + 1.0)
 
-        # Оскільки doc_id починаються з 1, віднімаємо 1 для індексації масиву
         doc_ids_zero_based = doc_ids - 1
         doc_len_for_postings = self.doc_lens[doc_ids_zero_based]
 
@@ -81,7 +80,6 @@ class NumpyInvertedIndex:
         if len(score_values) <= k:
             top_indices = np.argsort(score_values)[::-1]
         else:
-            # argpartition - це O(N), працює набагато швидше за повне сортування
             top_indices = np.argpartition(score_values, -k)[-k:]
             top_indices = top_indices[np.argsort(score_values[top_indices])[::-1]]
 

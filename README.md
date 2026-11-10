@@ -279,7 +279,7 @@ findex stats --index index.bin
 
 **Жива адреса:** https://findex-t5ks.onrender.com
 
-**Відео** ![Демонстрація](docs/2026-11-10 13-15-39.gif)
+**Відео** https://youtu.be/xiPuvL3qlJQ
 
 ### Головні числа
 *   **Розмір корпусу:** 3000 документів

@@ -52,10 +52,9 @@ class SemanticIndex:
             return []
 
         query_vec = self.model.encode([query], normalize_embeddings=True)[0]
-        # Оскільки вектори нормалізовані, косинусна близькість = скалярний добуток
+
         scores = np.dot(self.embeddings, query_vec)
 
-        # Беремо топ-k фрагментів (з запасом, бо один документ може мати кілька фрагментів)
         top_indices = np.argsort(scores)[::-1][:k * 3]
 
         results = {}

@@ -1,1 +1,5 @@
 data/
+embeddings.npz
+*.npz
+*.bin
+*.prof
